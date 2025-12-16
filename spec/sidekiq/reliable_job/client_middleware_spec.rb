@@ -9,8 +9,15 @@ RSpec.describe Sidekiq::ReliableJob::ClientMiddleware do
   let(:queue) { "default" }
   let(:redis_pool) { nil }
 
+  # Disable Sidekiq testing mode to test actual staging behavior
+  around do |example|
+    Sidekiq::Testing.disable! do
+      example.run
+    end
+  end
+
   describe "#call" do
-    context "when enable_for_all_jobs is false" do
+    context "when enable_for_all_jobs is false (disabled by default)" do
       before do
         Sidekiq::ReliableJob.configuration.enable_for_all_jobs = false
       end
@@ -25,9 +32,24 @@ RSpec.describe Sidekiq::ReliableJob::ClientMiddleware do
         middleware.call(job_class, job, queue, redis_pool) { true }
         expect(Sidekiq::ReliableJob::Outbox.count).to eq(0)
       end
+
+      context "when job explicitly opts in with reliable_job: true" do
+        let(:job) { { "class" => job_class, "args" => [1, 2], "jid" => "abc123", "reliable_job" => true } }
+
+        it "does not yield to the next middleware" do
+          yielded = false
+          middleware.call(job_class, job, queue, redis_pool) { yielded = true }
+          expect(yielded).to be false
+        end
+
+        it "stages the job to the outbox" do
+          middleware.call(job_class, job, queue, redis_pool) { true }
+          expect(Sidekiq::ReliableJob::Outbox.count).to eq(1)
+        end
+      end
     end
 
-    context "when enable_for_all_jobs is true" do
+    context "when enable_for_all_jobs is true (enabled by default)" do
       before do
         Sidekiq::ReliableJob.configuration.enable_for_all_jobs = true
       end
@@ -52,9 +74,9 @@ RSpec.describe Sidekiq::ReliableJob::ClientMiddleware do
         expect(job["reliable_job"]).to be true
       end
 
-      it "returns false to prevent normal Redis push" do
+      it "returns nil to prevent normal Redis push" do
         result = middleware.call(job_class, job, queue, redis_pool) { true }
-        expect(result).to be false
+        expect(result).to be_nil
       end
 
       context "when job explicitly opts out with reliable_job: false" do
@@ -67,21 +89,6 @@ RSpec.describe Sidekiq::ReliableJob::ClientMiddleware do
         end
 
         it "does not stage the job" do
-          middleware.call(job_class, job, queue, redis_pool) { true }
-          expect(Sidekiq::ReliableJob::Outbox.count).to eq(0)
-        end
-      end
-
-      context "when job already has reliable_job: true (via JobExtension)" do
-        let(:job) { { "class" => job_class, "args" => [1, 2], "jid" => "abc123", "reliable_job" => true } }
-
-        it "yields to the next middleware to avoid double staging" do
-          yielded = false
-          middleware.call(job_class, job, queue, redis_pool) { yielded = true }
-          expect(yielded).to be true
-        end
-
-        it "does not stage the job again" do
           middleware.call(job_class, job, queue, redis_pool) { true }
           expect(Sidekiq::ReliableJob::Outbox.count).to eq(0)
         end

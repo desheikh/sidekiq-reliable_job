@@ -3,6 +3,13 @@
 RSpec.describe Sidekiq::ReliableJob::Client do
   subject(:client) { described_class.new }
 
+  # Disable Sidekiq testing mode to test actual staging behavior
+  around do |example|
+    Sidekiq::Testing.disable! do
+      example.run
+    end
+  end
+
   describe "#push" do
     let(:item) do
       {

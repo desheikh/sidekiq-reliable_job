@@ -18,14 +18,16 @@ RSpec.describe "ReliableJob Integration" do
 
   describe "full job lifecycle" do
     it "stages job to database, enqueues to Redis, and deletes after processing" do
-      # Step 1: Enqueue a job using the reliable job extension
-      jid = ExampleJob.perform_async("integration test")
+      # Step 1: Enqueue a job using the reliable job option
+      ExampleJob.perform_async("integration test")
 
-      # Verify job is staged in database
-      outbox_record = Sidekiq::ReliableJob::Outbox.find_by(jid: jid)
+      # Verify job is staged in database (get the record by most recent)
+      outbox_record = Sidekiq::ReliableJob::Outbox.order(:id).last
       expect(outbox_record).to be_present
       expect(outbox_record.status).to eq("pending")
       expect(outbox_record.job_class).to eq("ExampleJob")
+
+      jid = outbox_record.jid
 
       # Verify job is NOT in Redis yet (because enqueuer hasn't run)
       Sidekiq.redis do |conn|
@@ -73,7 +75,9 @@ RSpec.describe "ReliableJob Integration" do
     end
 
     it "keeps job in database when processing fails" do
-      jid = ExampleJob.perform_async("will fail")
+      ExampleJob.perform_async("will fail")
+      outbox_record = Sidekiq::ReliableJob::Outbox.order(:id).last
+      jid = outbox_record.jid
 
       # Run enqueuer
       config = Sidekiq.default_configuration
@@ -82,7 +86,6 @@ RSpec.describe "ReliableJob Integration" do
 
       # Simulate job failure via server middleware
       middleware = Sidekiq::ReliableJob::ServerMiddleware.new
-      outbox_record = Sidekiq::ReliableJob::Outbox.find_by(jid: jid)
       job_payload = outbox_record.payload.merge("reliable_job" => true)
 
       expect {
@@ -94,14 +97,15 @@ RSpec.describe "ReliableJob Integration" do
     end
 
     it "marks job as dead when retries exhausted and deletes on successful retry" do
-      jid = ExampleJob.perform_async("will die then retry")
+      ExampleJob.perform_async("will die then retry")
+      outbox_record = Sidekiq::ReliableJob::Outbox.order(:id).last
+      jid = outbox_record.jid
 
       # Run enqueuer
       config = Sidekiq.default_configuration
       enqueuer = Sidekiq::ReliableJob::Enqueuer.new(config)
       enqueuer.send(:process_batch)
 
-      outbox_record = Sidekiq::ReliableJob::Outbox.find_by(jid: jid)
       job_payload = outbox_record.payload.merge("reliable_job" => true)
 
       # Simulate job death (retries exhausted)

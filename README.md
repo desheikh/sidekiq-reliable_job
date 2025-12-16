@@ -79,14 +79,14 @@ class DirectPushJob
 end
 ```
 
-### Option 2: Enable per job
+### Option 2: Enable per job (opt-in)
 
-If `enable_for_all_jobs` is `false`, include `Sidekiq::ReliableJob::JobExtension` in specific job classes:
+If `enable_for_all_jobs` is `false` (default), use `sidekiq_options` to opt-in specific jobs:
 
 ```ruby
 class MyJob
   include Sidekiq::Job
-  include Sidekiq::ReliableJob::JobExtension
+  sidekiq_options reliable_job: true
 
   def perform(user_id)
     # Your job logic here

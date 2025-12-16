@@ -11,7 +11,6 @@ require_relative "reliable_job/client"
 require_relative "reliable_job/client_middleware"
 require_relative "reliable_job/server_middleware"
 require_relative "reliable_job/enqueuer"
-require_relative "reliable_job/job_extension"
 
 module Sidekiq
   module ReliableJob

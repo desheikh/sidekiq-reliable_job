@@ -13,6 +13,9 @@ module Sidekiq
       end
 
       def push(item)
+        # In Sidekiq test modes, delegate to the normal client
+        return @redis_client.push(item) if sidekiq_testing_enabled?
+
         item["jid"] ||= SecureRandom.hex(12)
 
         Outbox.create!({
@@ -26,6 +29,12 @@ module Sidekiq
       end
 
       delegate :push_bulk, to: :@redis_client
+
+      private
+
+      def sidekiq_testing_enabled?
+        defined?(Sidekiq::Testing) && Sidekiq::Testing.enabled?
+      end
     end
   end
 end

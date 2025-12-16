@@ -48,8 +48,9 @@ RSpec.configure do |config|
   config.include ActiveSupport::Testing::TimeHelpers
 
   # Use Sidekiq fake mode by default and clear queues between tests
+  # Skip setting fake! if already in disabled mode (for integration tests)
   config.before do
-    Sidekiq::Testing.fake!
+    Sidekiq::Testing.fake! unless Sidekiq::Testing.disabled?
     Sidekiq::Queues.clear_all
   end
 

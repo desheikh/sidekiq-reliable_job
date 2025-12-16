@@ -2,7 +2,7 @@
 
 class ExampleJob
   include Sidekiq::Job
-  include Sidekiq::ReliableJob::JobExtension
+  sidekiq_options reliable_job: true
 
   def perform(message)
     Rails.logger.info "ExampleJob performed with: #{message}"
