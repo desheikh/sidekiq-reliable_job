@@ -2,13 +2,25 @@
 
 source "https://rubygems.org"
 
-# Specify your gem's dependencies in sidekiq-transactional_job.gemspec
-gemspec
+# Specify your gem's dependencies in sidekiq-reliable_job.gemspec
+gemspec name: "sidekiq-reliable_job"
 
 gem "irb"
 gem "rake", "~> 13.0"
 
+# Rails for dummy app
+gem "rails", ">= 7.1"
+
+# Testing
+gem "factory_bot_rails"
 gem "fuubar"
 gem "parse_a_changelog"
-gem "rspec", "~> 3.0"
-gem "rubocop", "~> 1.21"
+gem "pg"
+gem "rspec-rails", "~> 7.0"
+
+gem "rubocop"
+gem "rubocop-factory_bot"
+gem "rubocop-performance"
+gem "rubocop-rails"
+gem "rubocop-rake"
+gem "rubocop-rspec_rails"

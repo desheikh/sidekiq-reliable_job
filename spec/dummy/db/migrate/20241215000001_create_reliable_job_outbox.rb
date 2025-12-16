@@ -1,0 +1,19 @@
+# frozen_string_literal: true
+
+class CreateReliableJobOutbox < ActiveRecord::Migration[7.1]
+  def change
+    create_table :reliable_job_outbox do |t|
+      t.string :jid, null: false
+      t.string :job_class, null: false
+      t.json :payload, null: false
+      t.string :status, null: false, default: "pending"
+      t.datetime :enqueued_at
+
+      t.timestamps
+    end
+
+    add_index :reliable_job_outbox, :jid, unique: true
+    add_index :reliable_job_outbox, %i[status id]
+  end
+end
+

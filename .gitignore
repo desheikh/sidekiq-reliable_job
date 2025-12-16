@@ -9,3 +9,13 @@
 
 # rspec failure tracking
 .rspec_status
+
+# SQLite databases
+*.sqlite3
+
+# Log files
+/log/
+spec/dummy/log/
+
+# Temporary files
+spec/dummy/tmp/
