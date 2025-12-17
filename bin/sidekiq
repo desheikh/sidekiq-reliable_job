@@ -10,4 +10,10 @@ unless ARGV.any? { |arg| arg == "-r" || arg.start_with?("-r=") || arg.start_with
   ARGV.unshift("-r", File.expand_path("../spec/dummy/config/environment.rb", __dir__))
 end
 
+# Use sidekiq.yml config if -C not provided
+unless ARGV.any? { |arg| arg == "-C" || arg.start_with?("-C=") || arg.start_with?("--config") }
+  config_file = File.expand_path("../spec/dummy/config/sidekiq.yml", __dir__)
+  ARGV.push("-C", config_file) if File.exist?(config_file)
+end
+
 load Gem.bin_path("sidekiq", "sidekiq")

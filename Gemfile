@@ -9,6 +9,7 @@ gem "irb"
 gem "rake", "~> 13.0"
 
 # Rails for dummy app
+gem "puma"
 gem "rails", ">= 7.1"
 
 # Testing

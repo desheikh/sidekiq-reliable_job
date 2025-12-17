@@ -18,7 +18,6 @@ module Dummy
     config.load_defaults Rails::VERSION::STRING.to_f
 
     config.eager_load = false
-    config.api_only = true
 
     # Don't generate system test files
     config.generators.system_tests = nil
