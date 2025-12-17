@@ -7,4 +7,3 @@ class RegularActiveJob < ApplicationJob
     Rails.logger.info "RegularActiveJob performed with: #{message}"
   end
 end
-

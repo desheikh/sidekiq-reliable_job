@@ -1,0 +1,98 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Script to continuously enqueue random jobs for testing
+# Usage: bin/enqueue [interval_seconds] [batch_size]
+#
+# Examples:
+#   bin/enqueue              # Default: 1 job every 1 second
+#   bin/enqueue 0.5          # 1 job every 0.5 seconds
+#   bin/enqueue 1 3          # 3 jobs every 1 second
+
+require_relative "../spec/dummy/config/environment"
+
+INTERVAL = (ARGV[0] || 1).to_f
+BATCH_SIZE = (ARGV[1] || 1).to_i
+
+# Job configurations with weights (higher = more frequent)
+JOBS = [
+  # Sidekiq Jobs
+  { klass: "SuccessJob", weight: 30, args: -> { [["Hello #{Time.now.to_i}", nil].sample] } },
+  { klass: "FlakyJob", weight: 20, args: -> { [[0.5, 0.7, 0.3].sample] } },
+  { klass: "DoomedJob", weight: 5, args: -> { [["bad luck", "inevitable", nil].sample] } },
+  { klass: "SlowJob", weight: 10, args: -> { [[1, 2, 3].sample] } },
+  { klass: "ComplexArgsJob", weight: 15, args: -> { [rand(1000..9999), { action: %w[create update delete].sample, priority: rand(1..5) }] } },
+  { klass: "CriticalJob", weight: 10, args: -> { [%w[high medium low].sample] } },
+
+  # ActiveJob Jobs
+  { klass: "ActiveSuccessJob", weight: 25, args: -> { ["ActiveJob message #{Time.now.to_i}"] }, active_job: true },
+  { klass: "ActiveFlakyJob", weight: 15, args: -> { [[0.5, 0.6].sample] }, active_job: true },
+  { klass: "ActiveDoomedJob", weight: 3, args: -> { ["ActiveJob doom"] }, active_job: true },
+].freeze
+
+# Build weighted list for random selection
+WEIGHTED_JOBS = JOBS.flat_map { |job| [job] * job[:weight] }.freeze
+
+def enqueue_random_job
+  job_config = WEIGHTED_JOBS.sample
+  klass = job_config[:klass].constantize
+  args = job_config[:args].call
+
+  if job_config[:active_job]
+    klass.perform_later(*args)
+  else
+    klass.perform_async(*args)
+  end
+
+  puts "[#{Time.now.strftime('%H:%M:%S')}] Enqueued #{job_config[:klass]} with args: #{args.inspect}"
+rescue StandardError => e
+  puts "[#{Time.now.strftime('%H:%M:%S')}] ERROR enqueueing #{job_config[:klass]}: #{e.message}"
+end
+
+puts "=" * 60
+puts "Job Enqueuer Started"
+puts "=" * 60
+puts "Interval: #{INTERVAL}s | Batch size: #{BATCH_SIZE}"
+puts "Press Ctrl+C to stop"
+puts "=" * 60
+puts
+
+# Stats tracking
+stats = Hash.new(0)
+start_time = Time.now
+
+trap("INT") do
+  puts "\n\n" + "=" * 60
+  puts "Stopping... Final Stats:"
+  puts "=" * 60
+  puts "Runtime: #{(Time.now - start_time).round(1)}s"
+  puts "Total jobs enqueued: #{stats.values.sum}"
+  stats.sort_by { |_, v| -v }.each do |klass, count|
+    puts "  #{klass}: #{count}"
+  end
+  puts "=" * 60
+  exit
+end
+
+loop do
+  BATCH_SIZE.times do
+    job_config = WEIGHTED_JOBS.sample
+    klass = job_config[:klass].constantize
+    args = job_config[:args].call
+
+    begin
+      if job_config[:active_job]
+        klass.perform_later(*args)
+      else
+        klass.perform_async(*args)
+      end
+      stats[job_config[:klass]] += 1
+      puts "[#{Time.now.strftime('%H:%M:%S')}] ✓ #{job_config[:klass]} #{args.inspect[0..60]}"
+    rescue StandardError => e
+      puts "[#{Time.now.strftime('%H:%M:%S')}] ✗ #{job_config[:klass]}: #{e.message}"
+    end
+  end
+
+  sleep INTERVAL
+end
+

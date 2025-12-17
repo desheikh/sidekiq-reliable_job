@@ -10,4 +10,3 @@ class ExampleActiveJob < ApplicationJob
     Rails.logger.info "ExampleActiveJob performed with: #{message}"
   end
 end
-
