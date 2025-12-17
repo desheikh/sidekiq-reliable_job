@@ -130,5 +130,81 @@ RSpec.describe "ReliableJob Integration" do
       }.not_to change(Sidekiq::ReliableJob::Outbox, :count)
     end
   end
+
+  describe "ActiveJob integration" do
+    it "stages ActiveJob jobs with reliable_job: true" do
+      # Enqueue an ActiveJob with reliable_job option
+      ExampleActiveJob.perform_later("activejob test")
+
+      # Verify job is staged in database
+      outbox_record = Sidekiq::ReliableJob::Outbox.order(:id).last
+      expect(outbox_record).to be_present
+      expect(outbox_record.status).to eq("pending")
+      expect(outbox_record.job_class).to eq("ExampleActiveJob")
+
+      # Verify job is NOT in Redis yet
+      Sidekiq.redis do |conn|
+        expect(conn.llen("queue:default")).to eq(0)
+      end
+
+      # Run the enqueuer to push jobs to Redis
+      config = Sidekiq.default_configuration
+      enqueuer = Sidekiq::ReliableJob::Enqueuer.new(config)
+      enqueuer.send(:process_batch)
+
+      # Verify job is now in Redis
+      Sidekiq.redis do |conn|
+        expect(conn.llen("queue:default")).to eq(1)
+      end
+
+      # Verify job status is updated in database
+      outbox_record.reload
+      expect(outbox_record.status).to eq("enqueued")
+    end
+
+    it "bypasses staging for ActiveJob jobs without reliable_job option" do
+      expect {
+        RegularActiveJob.perform_later("regular activejob")
+      }.not_to change(Sidekiq::ReliableJob::Outbox, :count)
+    end
+
+    it "does not lose ActiveJob jobs when transaction rolls back" do
+      # Job creation inside a rolled-back transaction should not persist
+      expect {
+        ActiveRecord::Base.transaction do
+          ExampleActiveJob.perform_later("this will be rolled back")
+          raise ActiveRecord::Rollback
+        end
+      }.not_to change(Sidekiq::ReliableJob::Outbox, :count)
+
+      # And nothing should be in Redis
+      Sidekiq.redis do |conn|
+        expect(conn.llen("queue:default")).to eq(0)
+      end
+    end
+
+    it "full lifecycle: stages, enqueues, and deletes ActiveJob after processing" do
+      ExampleActiveJob.perform_later("full lifecycle test")
+
+      outbox_record = Sidekiq::ReliableJob::Outbox.order(:id).last
+      jid = outbox_record.jid
+
+      # Run enqueuer
+      config = Sidekiq.default_configuration
+      enqueuer = Sidekiq::ReliableJob::Enqueuer.new(config)
+      enqueuer.send(:process_batch)
+
+      # Simulate job completion via server middleware
+      middleware = Sidekiq::ReliableJob::ServerMiddleware.new
+      job_payload = outbox_record.reload.payload.merge("reliable_job" => true)
+
+      # For ActiveJob, the worker is the JobWrapper
+      wrapper = ActiveJob::QueueAdapters::SidekiqAdapter::JobWrapper.new
+      middleware.call(wrapper, job_payload, "default") { true }
+
+      # Verify job is deleted from database after successful completion
+      expect(Sidekiq::ReliableJob::Outbox.exists?(jid: jid)).to be false
+    end
+  end
 end
 # rubocop:enable RSpec/DescribeClass

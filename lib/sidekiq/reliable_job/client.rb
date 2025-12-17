@@ -20,7 +20,7 @@ module Sidekiq
 
         Outbox.create!({
           jid: item["jid"],
-          job_class: item["class"].to_s,
+          job_class: extract_job_class(item),
           payload: item,
           status: Outbox::PENDING,
         })
@@ -31,6 +31,12 @@ module Sidekiq
       delegate :push_bulk, to: :@redis_client
 
       private
+
+      # For ActiveJob, the actual job class is stored in "wrapped"
+      # For native Sidekiq jobs, it's in "class"
+      def extract_job_class(item)
+        (item["wrapped"] || item["class"]).to_s
+      end
 
       def sidekiq_testing_enabled?
         defined?(Sidekiq::Testing) && Sidekiq::Testing.enabled?

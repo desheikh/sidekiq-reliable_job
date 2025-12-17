@@ -94,5 +94,69 @@ RSpec.describe Sidekiq::ReliableJob::ClientMiddleware do
         end
       end
     end
+
+    context "with ActiveJob (Sidekiq 8+)" do
+      let(:job_class) { "Sidekiq::ActiveJob::Wrapper" }
+
+      context "when wrapped class has reliable_job: true" do
+        let(:job) do
+          {
+            "class" => job_class,
+            "wrapped" => ExampleActiveJob,
+            "args" => [{ "job_class" => "ExampleActiveJob", "arguments" => ["test"] }],
+            "jid" => "abc123",
+          }
+        end
+
+        it "stages the job" do
+          middleware.call(job_class, job, queue, redis_pool) { true }
+          expect(Sidekiq::ReliableJob::Outbox.count).to eq(1)
+        end
+
+        it "does not yield to the next middleware" do
+          yielded = false
+          middleware.call(job_class, job, queue, redis_pool) { yielded = true }
+          expect(yielded).to be false
+        end
+      end
+
+      context "when wrapped class does not have reliable_job option" do
+        let(:job) do
+          {
+            "class" => job_class,
+            "wrapped" => RegularActiveJob,
+            "args" => [{ "job_class" => "RegularActiveJob", "arguments" => ["test"] }],
+            "jid" => "abc123",
+          }
+        end
+
+        it "yields to the next middleware" do
+          yielded = false
+          middleware.call(job_class, job, queue, redis_pool) { yielded = true }
+          expect(yielded).to be true
+        end
+
+        it "does not stage the job" do
+          middleware.call(job_class, job, queue, redis_pool) { true }
+          expect(Sidekiq::ReliableJob::Outbox.count).to eq(0)
+        end
+      end
+
+      context "when wrapped class is a string" do
+        let(:job) do
+          {
+            "class" => job_class,
+            "wrapped" => "ExampleActiveJob",
+            "args" => [{ "job_class" => "ExampleActiveJob", "arguments" => ["test"] }],
+            "jid" => "abc123",
+          }
+        end
+
+        it "stages the job by looking up the class" do
+          middleware.call(job_class, job, queue, redis_pool) { true }
+          expect(Sidekiq::ReliableJob::Outbox.count).to eq(1)
+        end
+      end
+    end
   end
 end

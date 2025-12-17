@@ -55,6 +55,42 @@ RSpec.describe Sidekiq::ReliableJob::Client do
         }.not_to change(Sidekiq::ReliableJob::Outbox, :count)
       end
     end
+
+    context "with ActiveJob (Sidekiq 8+)" do
+      let(:item) do
+        {
+          "class" => "Sidekiq::ActiveJob::Wrapper",
+          "wrapped" => "ExampleActiveJob",
+          "args" => [{ "job_class" => "ExampleActiveJob", "arguments" => ["test"] }],
+          "queue" => "default",
+        }
+      end
+
+      it "extracts the wrapped job class" do
+        jid = client.push(item)
+        outbox_record = Sidekiq::ReliableJob::Outbox.find_by(jid: jid)
+
+        expect(outbox_record.job_class).to eq("ExampleActiveJob")
+      end
+    end
+
+    context "with ActiveJob (legacy adapter)" do
+      let(:item) do
+        {
+          "class" => "ActiveJob::QueueAdapters::SidekiqAdapter::JobWrapper",
+          "wrapped" => "ExampleActiveJob",
+          "args" => [{ "job_class" => "ExampleActiveJob", "arguments" => ["test"] }],
+          "queue" => "default",
+        }
+      end
+
+      it "extracts the wrapped job class" do
+        jid = client.push(item)
+        outbox_record = Sidekiq::ReliableJob::Outbox.find_by(jid: jid)
+
+        expect(outbox_record.job_class).to eq("ExampleActiveJob")
+      end
+    end
   end
 
   describe "#push_bulk" do
