@@ -13,7 +13,6 @@ module Sidekiq
       end
 
       def push(item)
-        # In Sidekiq test modes, delegate to the normal client
         return @redis_client.push(item) if sidekiq_testing_enabled?
 
         item["jid"] ||= SecureRandom.hex(12)
@@ -32,8 +31,6 @@ module Sidekiq
 
       private
 
-      # For ActiveJob, the actual job class is stored in "wrapped"
-      # For native Sidekiq jobs, it's in "class"
       def extract_job_class(item)
         (item["wrapped"] || item["class"]).to_s
       end

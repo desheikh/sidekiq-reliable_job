@@ -158,5 +158,59 @@ RSpec.describe Sidekiq::ReliableJob::ClientMiddleware do
         end
       end
     end
+
+    context "when job is a retry" do
+      before do
+        Sidekiq::ReliableJob.configuration.enable_for_all_jobs = true
+      end
+
+      after do
+        Sidekiq::ReliableJob.configuration.enable_for_all_jobs = false
+      end
+
+      context "when job has retry_count" do
+        let(:job) do
+          {
+            "class" => job_class,
+            "args" => [1, 2],
+            "jid" => "abc123",
+            "reliable_job" => true,
+            "retry_count" => 0,
+            "error_message" => "Something failed",
+            "error_class" => "RuntimeError",
+            "failed_at" => Time.now.to_f,
+          }
+        end
+
+        it "yields to the next middleware (lets Sidekiq handle retry)" do
+          yielded = false
+          middleware.call(job_class, job, queue, redis_pool) { yielded = true }
+          expect(yielded).to be true
+        end
+
+        it "does not re-stage the job" do
+          middleware.call(job_class, job, queue, redis_pool) { true }
+          expect(Sidekiq::ReliableJob::Outbox.count).to eq(0)
+        end
+      end
+
+      context "when job has failed_at but no retry_count yet" do
+        let(:job) do
+          {
+            "class" => job_class,
+            "args" => [1, 2],
+            "jid" => "abc123",
+            "reliable_job" => true,
+            "failed_at" => Time.now.to_f,
+          }
+        end
+
+        it "yields to the next middleware (lets Sidekiq handle retry)" do
+          yielded = false
+          middleware.call(job_class, job, queue, redis_pool) { yielded = true }
+          expect(yielded).to be true
+        end
+      end
+    end
   end
 end

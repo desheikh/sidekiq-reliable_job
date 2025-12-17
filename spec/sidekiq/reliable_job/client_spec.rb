@@ -56,6 +56,25 @@ RSpec.describe Sidekiq::ReliableJob::Client do
       end
     end
 
+    context "when job with same JID already exists" do
+      let!(:existing_outbox) do
+        create(:outbox, jid: "existing_jid_123", status: "enqueued")
+      end
+
+      let(:item) do
+        {
+          "class" => "ExampleJob",
+          "args" => ["new message"],
+          "queue" => "default",
+          "jid" => "existing_jid_123",
+        }
+      end
+
+      it "raises an error (duplicate JIDs indicate a bug)" do
+        expect { client.push(item) }.to raise_error(ActiveRecord::RecordNotUnique)
+      end
+    end
+
     context "with ActiveJob (Sidekiq 8+)" do
       let(:item) do
         {

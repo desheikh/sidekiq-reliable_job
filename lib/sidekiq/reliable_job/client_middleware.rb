@@ -18,15 +18,12 @@ module Sidekiq
         return yield if sidekiq_testing_enabled?
         return yield unless should_stage?(job)
 
-        job["reliable_job"] = true
+        return yield if retry?(job)
 
-        # Stage the job to the outbox
-        # Client#push sets job["jid"] if not already set
+        job["reliable_job"] = true
         Client.new.push(job)
 
-        # Return nil to prevent normal Redis push
-        # Sidekiq will return job["jid"] to the caller
-        nil
+        nil # Prevent normal Redis push
       end
 
       private
@@ -34,21 +31,23 @@ module Sidekiq
       def should_stage?(job)
         option = reliable_job_option(job)
 
-        return false if option == false # Explicit opt-out
+        return false if option == false
 
         option == true || Sidekiq::ReliableJob.configuration.enable_for_all_jobs
       end
 
-      # Get the reliable_job option from job payload or wrapped class's sidekiq_options
       def reliable_job_option(job)
         return job["reliable_job"] if job.key?("reliable_job")
 
-        # For ActiveJob, check the wrapped class's sidekiq_options
         wrapped = job["wrapped"]
         return nil unless wrapped
 
         job_class = wrapped.is_a?(Class) ? wrapped : wrapped.to_s.safe_constantize
         job_class&.try(:sidekiq_options_hash)&.dig("reliable_job")
+      end
+
+      def retry?(job)
+        job.key?("retry_count") || job.key?("failed_at")
       end
 
       def sidekiq_testing_enabled?
