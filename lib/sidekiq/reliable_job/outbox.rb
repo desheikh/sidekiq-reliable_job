@@ -12,10 +12,12 @@ module Sidekiq
 
       PENDING = "pending"
       ENQUEUED = "enqueued"
+      SCHEDULED = "scheduled"
       DEAD = "dead"
 
       scope :pending, -> { where(status: PENDING) }
       scope :enqueued, -> { where(status: ENQUEUED) }
+      scope :scheduled, -> { where(status: SCHEDULED) }
       scope :dead, -> { where(status: DEAD) }
     end
   end

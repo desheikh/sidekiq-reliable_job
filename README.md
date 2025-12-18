@@ -130,8 +130,8 @@ end
 
 ## How It Works
 
-1. **Client Middleware**: Intercepts `perform_async` calls and stages jobs to the `reliable_job_outbox` table instead of pushing directly to Redis.
-2. **Outbox Processor**: A background thread polls for pending jobs and pushes them to Redis in batches.
+1. **Client Middleware**: Intercepts `perform_async` and `perform_in` calls and stages jobs to the `reliable_job_outbox` table instead of pushing directly to Redis.
+2. **Outbox Processor**: A background thread polls for pending jobs and pushes them to Redis:
 3. **Server Middleware**: After successful job completion, deletes the staged job record from the outbox.
 4. **Death Handler**: When a job exhausts all retries, removes (or optionally preserves) the record from the outbox.
 
@@ -175,6 +175,21 @@ If containers are running different versions during deployment:
 | `enable_for_all_jobs` | `false` | When `true`, all jobs are staged through the outbox |
 | `base_class` | `"ActiveRecord::Base"` | The ActiveRecord base class for the Outbox model |
 | `preserve_dead_jobs` | `false` | When `true`, keeps dead jobs in outbox with "dead" status instead of deleting |
+
+## Limitations
+
+### Batch Jobs (Sidekiq Pro/Enterprise)
+
+Jobs that are part of a batch (have a `bid` in their payload) are **automatically bypassed** and pushed directly to Redis. This ensures batch callbacks and completion tracking work correctly.
+
+### Internal Sidekiq Jobs
+
+All internal Sidekiq jobs (classes starting with `Sidekiq::`) are **automatically bypassed**. This includes:
+
+- Batch callbacks (`Sidekiq::Batch::Callback`)
+- Batch empty handlers (`Sidekiq::Batch::Empty`)
+- Enterprise periodic jobs (`Sidekiq::Periodic::*`)
+- Any other internal Sidekiq system jobs
 
 ## Development
 

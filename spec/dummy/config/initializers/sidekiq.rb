@@ -6,6 +6,10 @@ require "sidekiq/reliable_job"
 # This is needed so Sidekiq can process ActiveJob jobs
 require "active_job/queue_adapters/sidekiq_adapter"
 
+Sidekiq::ReliableJob.configure do |config|
+  config.enable_for_all_jobs = true
+end
+
 Sidekiq.configure_client do |config|
   Sidekiq::ReliableJob.configure_client!(config)
 end

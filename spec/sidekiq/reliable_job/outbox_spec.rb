@@ -27,6 +27,7 @@ RSpec.describe Sidekiq::ReliableJob::Outbox do
   describe "scopes" do
     let!(:pending_job) { create(:outbox, status: "pending") }
     let!(:enqueued_job) { create(:outbox, :enqueued) }
+    let!(:scheduled_job) { create(:outbox, :scheduled) }
     let!(:dead_job) { create(:outbox, :dead) }
 
     describe ".pending" do
@@ -38,6 +39,12 @@ RSpec.describe Sidekiq::ReliableJob::Outbox do
     describe ".enqueued" do
       it "returns only enqueued jobs" do
         expect(described_class.enqueued).to contain_exactly(enqueued_job)
+      end
+    end
+
+    describe ".scheduled" do
+      it "returns only scheduled jobs" do
+        expect(described_class.scheduled).to contain_exactly(scheduled_job)
       end
     end
 

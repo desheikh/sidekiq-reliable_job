@@ -28,26 +28,17 @@ JOBS = [
   { klass: "ActiveSuccessJob", weight: 25, args: -> { ["ActiveJob message #{Time.now.to_i}"] }, active_job: true },
   { klass: "ActiveFlakyJob", weight: 15, args: -> { [[0.5, 0.6].sample] }, active_job: true },
   { klass: "ActiveDoomedJob", weight: 3, args: -> { ["ActiveJob doom"] }, active_job: true },
+
+  # Scheduled Jobs
+  { klass: "SuccessJob", weight: 10, args: -> { ["Scheduled #{Time.now.to_i}"] }, delay: -> { rand(5..30) } },
+  { klass: "ActiveSuccessJob", weight: 8, args: -> { ["Scheduled ActiveJob #{Time.now.to_i}"] }, active_job: true, delay: -> { rand(5..30) } },
+
+  # Batch Jobs (Sidekiq Pro)
+  # { klass: "BatchChildJob", weight: 5, batch: true, batch_size: -> { rand(3..5) } },
 ].freeze
 
 # Build weighted list for random selection
 WEIGHTED_JOBS = JOBS.flat_map { |job| [job] * job[:weight] }.freeze
-
-def enqueue_random_job
-  job_config = WEIGHTED_JOBS.sample
-  klass = job_config[:klass].constantize
-  args = job_config[:args].call
-
-  if job_config[:active_job]
-    klass.perform_later(*args)
-  else
-    klass.perform_async(*args)
-  end
-
-  puts "[#{Time.now.strftime('%H:%M:%S')}] Enqueued #{job_config[:klass]} with args: #{args.inspect}"
-rescue StandardError => e
-  puts "[#{Time.now.strftime('%H:%M:%S')}] ERROR enqueueing #{job_config[:klass]}: #{e.message}"
-end
 
 puts "=" * 60
 puts "Job Enqueuer Started"
@@ -59,13 +50,13 @@ puts
 
 # Stats tracking
 stats = Hash.new(0)
-start_time = Time.now
+start_time = Time.zone.now
 
 trap("INT") do
-  puts "\n\n" + "=" * 60
+  puts "\n\n#{'=' * 60}"
   puts "Stopping... Final Stats:"
   puts "=" * 60
-  puts "Runtime: #{(Time.now - start_time).round(1)}s"
+  puts "Runtime: #{(Time.zone.now - start_time).round(1)}s"
   puts "Total jobs enqueued: #{stats.values.sum}"
   stats.sort_by { |_, v| -v }.each do |klass, count|
     puts "  #{klass}: #{count}"
@@ -74,25 +65,58 @@ trap("INT") do
   exit
 end
 
+def enqueue_batch(job_config)
+  klass = job_config[:klass].constantize
+  batch_size = job_config[:batch_size].call
+
+  batch = Sidekiq::Batch.new
+  batch.description = "Test batch #{Time.zone.now.to_i}"
+  batch.jobs do
+    batch_size.times { |i| klass.perform_async(i + 1) }
+  end
+
+  [batch.bid, batch_size]
+end
+
+# rubocop:disable Metrics/BlockLength
 loop do
   BATCH_SIZE.times do
     job_config = WEIGHTED_JOBS.sample
     klass = job_config[:klass].constantize
-    args = job_config[:args].call
 
     begin
-      if job_config[:active_job]
-        klass.perform_later(*args)
+      if job_config[:batch]
+        bid, size = enqueue_batch(job_config)
+        stats["Batch(#{job_config[:klass]})"] += 1
+        puts "[#{Time.zone.now.strftime('%H:%M:%S')}] 📦 Batch #{bid[0..7]}... (#{size} jobs)"
+      elsif job_config[:active_job]
+        args = job_config[:args].call
+        delay = job_config[:delay]&.call
+        if delay
+          klass.set(wait: delay.seconds).perform_later(*args)
+          puts "[#{Time.zone.now.strftime('%H:%M:%S')}] ⏰ #{job_config[:klass]} in #{delay}s #{args.inspect[0..40]}"
+        else
+          klass.perform_later(*args)
+          puts "[#{Time.zone.now.strftime('%H:%M:%S')}] ✓ #{job_config[:klass]} #{args.inspect[0..50]}"
+        end
+        stats[job_config[:klass]] += 1
       else
-        klass.perform_async(*args)
+        args = job_config[:args].call
+        delay = job_config[:delay]&.call
+        if delay
+          klass.perform_in(delay, *args)
+          puts "[#{Time.zone.now.strftime('%H:%M:%S')}] ⏰ #{job_config[:klass]} in #{delay}s #{args.inspect[0..40]}"
+        else
+          klass.perform_async(*args)
+          puts "[#{Time.zone.now.strftime('%H:%M:%S')}] ✓ #{job_config[:klass]} #{args.inspect[0..50]}"
+        end
+        stats[job_config[:klass]] += 1
       end
-      stats[job_config[:klass]] += 1
-      puts "[#{Time.now.strftime('%H:%M:%S')}] ✓ #{job_config[:klass]} #{args.inspect[0..60]}"
     rescue StandardError => e
-      puts "[#{Time.now.strftime('%H:%M:%S')}] ✗ #{job_config[:klass]}: #{e.message}"
+      puts "[#{Time.zone.now.strftime('%H:%M:%S')}] ✗ #{job_config[:klass]}: #{e.message}"
     end
   end
 
   sleep INTERVAL
 end
-
+# rubocop:enable Metrics/BlockLength

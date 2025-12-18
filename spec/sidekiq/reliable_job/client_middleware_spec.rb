@@ -127,5 +127,72 @@ RSpec.describe Sidekiq::ReliableJob::ClientMiddleware do
 
       include_examples "bypasses staging"
     end
+
+    context "when job is scheduled" do
+      before { Sidekiq::ReliableJob.configuration.enable_for_all_jobs = true }
+      after { Sidekiq::ReliableJob.configuration.enable_for_all_jobs = false }
+
+      let(:job) do
+        {
+          "class" => job_class,
+          "args" => [1, 2],
+          "jid" => "scheduled123",
+          "at" => 1.hour.from_now.to_f,
+        }
+      end
+
+      include_examples "stages the job"
+
+      it "preserves the scheduled time in payload" do
+        call
+        outbox = Sidekiq::ReliableJob::Outbox.last
+        expect(outbox.payload["at"]).to be_present
+      end
+    end
+
+    context "when job is part of a batch" do
+      before { Sidekiq::ReliableJob.configuration.enable_for_all_jobs = true }
+      after { Sidekiq::ReliableJob.configuration.enable_for_all_jobs = false }
+
+      let(:job) do
+        {
+          "class" => job_class,
+          "args" => [1, 2],
+          "jid" => "batch123",
+          "bid" => "abc123def456",
+        }
+      end
+
+      include_examples "bypasses staging"
+    end
+
+    context "when job is a Sidekiq internal job" do
+      before { Sidekiq::ReliableJob.configuration.enable_for_all_jobs = true }
+      after { Sidekiq::ReliableJob.configuration.enable_for_all_jobs = false }
+
+      context "with batch callback" do
+        let(:job) do
+          {
+            "class" => "Sidekiq::Batch::Callback",
+            "args" => %w[success batch123 default],
+            "jid" => "callback123",
+          }
+        end
+
+        include_examples "bypasses staging"
+      end
+
+      context "with other Sidekiq internal class" do
+        let(:job) do
+          {
+            "class" => "Sidekiq::Periodic::Loop",
+            "args" => [],
+            "jid" => "internal123",
+          }
+        end
+
+        include_examples "bypasses staging"
+      end
+    end
   end
 end

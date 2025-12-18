@@ -6,6 +6,7 @@ source "https://rubygems.org"
 gemspec name: "sidekiq-reliable_job"
 
 gem "irb"
+gem "pry"
 gem "rake", "~> 13.0"
 
 # Rails for dummy app

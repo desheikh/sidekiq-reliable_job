@@ -42,5 +42,6 @@ RSpec.configure do |config|
     Sidekiq::Testing.fake! unless Sidekiq::Testing.disabled?
     Sidekiq::Queues.clear_all
     Sidekiq::ReliableJob::Outbox.delete_all
+    Sidekiq::ReliableJob.configuration.enable_for_all_jobs = false
   end
 end

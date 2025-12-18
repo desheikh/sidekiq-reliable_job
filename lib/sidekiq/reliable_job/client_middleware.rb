@@ -16,7 +16,18 @@ module Sidekiq
       private
 
       def skip_staging?(job)
-        retry?(job) || !enabled_for?(job)
+        retry?(job) || batch?(job) || sidekiq_internal?(job) || !enabled_for?(job)
+      end
+
+      def batch?(job)
+        job.key?("bid")
+      end
+
+      # Bypass internal Sidekiq jobs (batch callbacks, Enterprise features, etc.)
+      # but not ActiveJob wrapper which should be staged
+      def sidekiq_internal?(job)
+        klass = job["class"].to_s
+        klass.start_with?("Sidekiq::") && klass != "Sidekiq::ActiveJob::Wrapper"
       end
 
       def enabled_for?(job)
