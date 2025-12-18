@@ -2,22 +2,17 @@
 
 RSpec.describe Sidekiq::ReliableJob do
   it "has a version number" do
-    expect(Sidekiq::ReliableJob::VERSION).not_to be_nil
+    expect(described_class::VERSION).not_to be_nil
   end
 
   describe ".configuration" do
-    it "returns a Configuration instance" do
-      expect(described_class.configuration).to be_a(Sidekiq::ReliableJob::Configuration)
-    end
+    subject(:configuration) { described_class.configuration }
+
+    it { is_expected.to be_a(described_class::Configuration) }
+    it { is_expected.to have_attributes(base_class: be_present) }
 
     it "returns the same instance on multiple calls" do
-      first_call = described_class.configuration
-      second_call = described_class.configuration
-      expect(first_call).to be(second_call)
-    end
-
-    it "has a base_class setting" do
-      expect(described_class.configuration.base_class).to be_present
+      expect(configuration).to be(described_class.configuration)
     end
   end
 
@@ -31,13 +26,9 @@ RSpec.describe Sidekiq::ReliableJob do
     it "allows setting base_class" do
       original = described_class.configuration.base_class
 
-      described_class.configure do |config|
-        config.base_class = "CustomRecord"
-      end
-
+      described_class.configure { |c| c.base_class = "CustomRecord" }
       expect(described_class.configuration.base_class).to eq("CustomRecord")
 
-      # Reset to original
       described_class.configuration.base_class = original
     end
   end
@@ -52,92 +43,72 @@ RSpec.describe Sidekiq::ReliableJob do
 
       described_class.configure_client!(config)
 
-      expect(chain).to have_received(:add).with(Sidekiq::ReliableJob::ClientMiddleware)
+      expect(chain).to have_received(:add).with(described_class::ClientMiddleware)
     end
   end
 
   describe ".configure_server!" do
-    it "registers the server middleware" do
-      config = instance_double(Sidekiq::Config)
-      chain = instance_double(Sidekiq::Middleware::Chain)
-      death_handlers = []
+    let(:config) { instance_double(Sidekiq::Config) }
+    let(:chain) { instance_double(Sidekiq::Middleware::Chain) }
+    let(:death_handlers) { [] }
 
+    before do
+      allow(config).to receive_messages(
+        client_middleware: nil,
+        server_middleware: nil,
+        on: nil,
+        death_handlers: death_handlers,
+      )
       allow(config).to receive(:client_middleware).and_yield(chain)
       allow(config).to receive(:server_middleware).and_yield(chain)
-      allow(config).to receive(:on)
-      allow(config).to receive(:death_handlers).and_return(death_handlers)
       allow(chain).to receive(:add)
+    end
 
+    it "registers both client and server middleware" do
       described_class.configure_server!(config)
 
-      expect(chain).to have_received(:add).with(Sidekiq::ReliableJob::ServerMiddleware)
+      expect(chain).to have_received(:add).with(described_class::ClientMiddleware)
+      expect(chain).to have_received(:add).with(described_class::ServerMiddleware)
     end
 
     it "registers a death handler" do
-      config = instance_double(Sidekiq::Config)
-      chain = instance_double(Sidekiq::Middleware::Chain)
-      death_handlers = []
-
-      allow(config).to receive(:client_middleware).and_yield(chain)
-      allow(config).to receive(:server_middleware).and_yield(chain)
-      allow(config).to receive(:on)
-      allow(config).to receive(:death_handlers).and_return(death_handlers)
-      allow(chain).to receive(:add)
-
       described_class.configure_server!(config)
 
       expect(death_handlers.size).to eq(1)
-    end
-
-    it "also configures client middleware" do
-      config = instance_double(Sidekiq::Config)
-      chain = instance_double(Sidekiq::Middleware::Chain)
-      death_handlers = []
-
-      allow(config).to receive(:client_middleware).and_yield(chain)
-      allow(config).to receive(:server_middleware).and_yield(chain)
-      allow(config).to receive(:on)
-      allow(config).to receive(:death_handlers).and_return(death_handlers)
-      allow(chain).to receive(:add)
-
-      described_class.configure_server!(config)
-
-      expect(chain).to have_received(:add).with(Sidekiq::ReliableJob::ClientMiddleware)
     end
   end
 
   describe ".on_death" do
     let!(:outbox_record) { create(:outbox, :enqueued, jid: "dead_job_123") }
+    let(:job) { { "jid" => "dead_job_123", "reliable_job" => true } }
+    let(:exception) { RuntimeError.new("failed") }
+
+    it "ignores non-reliable jobs" do
+      described_class.on_death({ "jid" => "dead_job_123" }, exception)
+
+      expect(outbox_record.reload.status).to eq("enqueued")
+    end
 
     context "when preserve_dead_jobs is false (default)" do
-      it "deletes reliable jobs from outbox" do
-        job = { "jid" => "dead_job_123", "reliable_job" => true }
+      it "deletes the job from outbox" do
+        described_class.on_death(job, exception)
 
-        described_class.on_death(job, RuntimeError.new("failed"))
-
-        expect(Sidekiq::ReliableJob::Outbox.exists?(jid: "dead_job_123")).to be false
+        expect(described_class::Outbox.exists?(jid: "dead_job_123")).to be false
       end
     end
 
     context "when preserve_dead_jobs is true" do
-      before { described_class.configuration.preserve_dead_jobs = true }
-      after { described_class.configuration.preserve_dead_jobs = false }
+      around do |example|
+        described_class.configuration.preserve_dead_jobs = true
+        example.run
+        described_class.configuration.preserve_dead_jobs = false
+      end
 
-      it "marks reliable jobs as dead" do
-        job = { "jid" => "dead_job_123", "reliable_job" => true }
-
-        described_class.on_death(job, RuntimeError.new("failed"))
+      it "marks the job as dead" do
+        described_class.on_death(job, exception)
 
         expect(outbox_record.reload.status).to eq("dead")
       end
-    end
-
-    it "ignores non-reliable jobs" do
-      job = { "jid" => "dead_job_123" }
-
-      described_class.on_death(job, RuntimeError.new("failed"))
-
-      expect(outbox_record.reload.status).to eq("enqueued")
     end
   end
 end

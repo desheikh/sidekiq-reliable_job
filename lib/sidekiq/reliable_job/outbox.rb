@@ -1,13 +1,12 @@
 # frozen_string_literal: true
 
-require "active_record"
-
 module Sidekiq
   module ReliableJob
     def self.base_class
-      @base_class ||= Sidekiq::ReliableJob.configuration.base_class.constantize
+      @base_class ||= configuration.base_class.constantize
     end
 
+    # ActiveRecord model for the job staging table.
     class Outbox < base_class
       self.table_name = "reliable_job_outbox"
 

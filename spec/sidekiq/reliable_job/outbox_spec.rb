@@ -3,24 +3,24 @@
 RSpec.describe Sidekiq::ReliableJob::Outbox do
   describe "database constraints" do
     it "enforces NOT NULL on jid" do
-      job = build(:outbox, jid: nil)
-      expect { job.save!(validate: false) }.to raise_error(ActiveRecord::NotNullViolation)
+      record = build(:outbox, jid: nil)
+      expect { record.save!(validate: false) }.to raise_error(ActiveRecord::NotNullViolation)
+    end
+
+    it "enforces NOT NULL on job_class" do
+      record = build(:outbox, job_class: nil)
+      expect { record.save!(validate: false) }.to raise_error(ActiveRecord::NotNullViolation)
+    end
+
+    it "enforces NOT NULL on status" do
+      record = build(:outbox, status: nil)
+      expect { record.save!(validate: false) }.to raise_error(ActiveRecord::NotNullViolation)
     end
 
     it "enforces unique jid" do
       existing = create(:outbox)
       duplicate = build(:outbox, jid: existing.jid)
       expect { duplicate.save!(validate: false) }.to raise_error(ActiveRecord::RecordNotUnique)
-    end
-
-    it "enforces NOT NULL on job_class" do
-      job = build(:outbox, job_class: nil)
-      expect { job.save!(validate: false) }.to raise_error(ActiveRecord::NotNullViolation)
-    end
-
-    it "enforces NOT NULL on status" do
-      job = build(:outbox, status: nil)
-      expect { job.save!(validate: false) }.to raise_error(ActiveRecord::NotNullViolation)
     end
   end
 

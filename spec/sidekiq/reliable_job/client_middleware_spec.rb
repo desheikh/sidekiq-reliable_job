@@ -1,101 +1,74 @@
 # frozen_string_literal: true
 
-require "spec_helper"
-
 RSpec.describe Sidekiq::ReliableJob::ClientMiddleware do
+  subject(:call) { middleware.call(job_class, job, queue, nil) { true } }
+
   let(:middleware) { described_class.new }
   let(:job_class) { "TestJob" }
   let(:job) { { "class" => job_class, "args" => [1, 2], "jid" => "abc123" } }
   let(:queue) { "default" }
-  let(:redis_pool) { nil }
+  let(:yielded) { false }
 
-  # Disable Sidekiq testing mode to test actual staging behavior
   around do |example|
-    Sidekiq::Testing.disable! do
-      example.run
+    Sidekiq::Testing.disable! { example.run }
+  end
+
+  shared_examples "stages the job" do
+    it "stages the job to the outbox" do
+      call
+      expect(Sidekiq::ReliableJob::Outbox.count).to eq(1)
+    end
+
+    it "does not yield to the next middleware" do
+      expect { middleware.call(job_class, job, queue, nil) { raise "should not yield" } }.not_to raise_error
+    end
+  end
+
+  shared_examples "bypasses staging" do
+    it "does not stage the job" do
+      call
+      expect(Sidekiq::ReliableJob::Outbox.count).to eq(0)
+    end
+
+    it "yields to the next middleware" do
+      yielded = false
+      middleware.call(job_class, job, queue, nil) { yielded = true }
+      expect(yielded).to be true
     end
   end
 
   describe "#call" do
-    context "when enable_for_all_jobs is false (disabled by default)" do
-      before do
-        Sidekiq::ReliableJob.configuration.enable_for_all_jobs = false
-      end
+    context "when enable_for_all_jobs is false (default)" do
+      before { Sidekiq::ReliableJob.configuration.enable_for_all_jobs = false }
 
-      it "yields to the next middleware" do
-        yielded = false
-        middleware.call(job_class, job, queue, redis_pool) { yielded = true }
-        expect(yielded).to be true
-      end
+      include_examples "bypasses staging"
 
-      it "does not stage the job" do
-        middleware.call(job_class, job, queue, redis_pool) { true }
-        expect(Sidekiq::ReliableJob::Outbox.count).to eq(0)
-      end
+      context "when job opts in with reliable_job: true" do
+        let(:job) { super().merge("reliable_job" => true) }
 
-      context "when job explicitly opts in with reliable_job: true" do
-        let(:job) { { "class" => job_class, "args" => [1, 2], "jid" => "abc123", "reliable_job" => true } }
-
-        it "does not yield to the next middleware" do
-          yielded = false
-          middleware.call(job_class, job, queue, redis_pool) { yielded = true }
-          expect(yielded).to be false
-        end
-
-        it "stages the job to the outbox" do
-          middleware.call(job_class, job, queue, redis_pool) { true }
-          expect(Sidekiq::ReliableJob::Outbox.count).to eq(1)
-        end
+        include_examples "stages the job"
       end
     end
 
-    context "when enable_for_all_jobs is true (enabled by default)" do
-      before do
-        Sidekiq::ReliableJob.configuration.enable_for_all_jobs = true
-      end
+    context "when enable_for_all_jobs is true" do
+      before { Sidekiq::ReliableJob.configuration.enable_for_all_jobs = true }
+      after { Sidekiq::ReliableJob.configuration.enable_for_all_jobs = false }
 
-      after do
-        Sidekiq::ReliableJob.configuration.enable_for_all_jobs = false
-      end
-
-      it "does not yield to the next middleware" do
-        yielded = false
-        middleware.call(job_class, job, queue, redis_pool) { yielded = true }
-        expect(yielded).to be false
-      end
-
-      it "stages the job to the outbox" do
-        middleware.call(job_class, job, queue, redis_pool) { true }
-        expect(Sidekiq::ReliableJob::Outbox.count).to eq(1)
-      end
+      include_examples "stages the job"
 
       it "marks the job as reliable_job" do
-        middleware.call(job_class, job, queue, redis_pool) { true }
+        call
         expect(job["reliable_job"]).to be true
       end
 
-      it "returns nil to prevent normal Redis push" do
-        result = middleware.call(job_class, job, queue, redis_pool) { true }
-        expect(result).to be_nil
-      end
+      context "when job opts out with reliable_job: false" do
+        let(:job) { super().merge("reliable_job" => false) }
 
-      context "when job explicitly opts out with reliable_job: false" do
-        let(:job) { { "class" => job_class, "args" => [1, 2], "jid" => "abc123", "reliable_job" => false } }
-
-        it "yields to the next middleware" do
-          yielded = false
-          middleware.call(job_class, job, queue, redis_pool) { yielded = true }
-          expect(yielded).to be true
-        end
-
-        it "does not stage the job" do
-          middleware.call(job_class, job, queue, redis_pool) { true }
-          expect(Sidekiq::ReliableJob::Outbox.count).to eq(0)
-        end
+        include_examples "bypasses staging"
       end
     end
 
-    context "with ActiveJob (Sidekiq 8+)" do
+    context "with ActiveJob wrapper" do
       let(:job_class) { "Sidekiq::ActiveJob::Wrapper" }
 
       context "when wrapped class has reliable_job: true" do
@@ -103,43 +76,12 @@ RSpec.describe Sidekiq::ReliableJob::ClientMiddleware do
           {
             "class" => job_class,
             "wrapped" => ExampleActiveJob,
-            "args" => [{ "job_class" => "ExampleActiveJob", "arguments" => ["test"] }],
+            "args" => [{ "job_class" => "ExampleActiveJob" }],
             "jid" => "abc123",
           }
         end
 
-        it "stages the job" do
-          middleware.call(job_class, job, queue, redis_pool) { true }
-          expect(Sidekiq::ReliableJob::Outbox.count).to eq(1)
-        end
-
-        it "does not yield to the next middleware" do
-          yielded = false
-          middleware.call(job_class, job, queue, redis_pool) { yielded = true }
-          expect(yielded).to be false
-        end
-      end
-
-      context "when wrapped class does not have reliable_job option" do
-        let(:job) do
-          {
-            "class" => job_class,
-            "wrapped" => RegularActiveJob,
-            "args" => [{ "job_class" => "RegularActiveJob", "arguments" => ["test"] }],
-            "jid" => "abc123",
-          }
-        end
-
-        it "yields to the next middleware" do
-          yielded = false
-          middleware.call(job_class, job, queue, redis_pool) { yielded = true }
-          expect(yielded).to be true
-        end
-
-        it "does not stage the job" do
-          middleware.call(job_class, job, queue, redis_pool) { true }
-          expect(Sidekiq::ReliableJob::Outbox.count).to eq(0)
-        end
+        include_examples "stages the job"
       end
 
       context "when wrapped class is a string" do
@@ -147,70 +89,43 @@ RSpec.describe Sidekiq::ReliableJob::ClientMiddleware do
           {
             "class" => job_class,
             "wrapped" => "ExampleActiveJob",
-            "args" => [{ "job_class" => "ExampleActiveJob", "arguments" => ["test"] }],
+            "args" => [{ "job_class" => "ExampleActiveJob" }],
             "jid" => "abc123",
           }
         end
 
-        it "stages the job by looking up the class" do
-          middleware.call(job_class, job, queue, redis_pool) { true }
-          expect(Sidekiq::ReliableJob::Outbox.count).to eq(1)
+        include_examples "stages the job"
+      end
+
+      context "when wrapped class does not have reliable_job option" do
+        let(:job) do
+          {
+            "class" => job_class,
+            "wrapped" => RegularActiveJob,
+            "args" => [{ "job_class" => "RegularActiveJob" }],
+            "jid" => "abc123",
+          }
         end
+
+        include_examples "bypasses staging"
       end
     end
 
     context "when job is a retry" do
-      before do
-        Sidekiq::ReliableJob.configuration.enable_for_all_jobs = true
+      before { Sidekiq::ReliableJob.configuration.enable_for_all_jobs = true }
+      after { Sidekiq::ReliableJob.configuration.enable_for_all_jobs = false }
+
+      let(:job) do
+        {
+          "class" => job_class,
+          "args" => [1, 2],
+          "jid" => "abc123",
+          "reliable_job" => true,
+          "retry_count" => 0,
+        }
       end
 
-      after do
-        Sidekiq::ReliableJob.configuration.enable_for_all_jobs = false
-      end
-
-      context "when job has retry_count" do
-        let(:job) do
-          {
-            "class" => job_class,
-            "args" => [1, 2],
-            "jid" => "abc123",
-            "reliable_job" => true,
-            "retry_count" => 0,
-            "error_message" => "Something failed",
-            "error_class" => "RuntimeError",
-            "failed_at" => Time.now.to_f,
-          }
-        end
-
-        it "yields to the next middleware (lets Sidekiq handle retry)" do
-          yielded = false
-          middleware.call(job_class, job, queue, redis_pool) { yielded = true }
-          expect(yielded).to be true
-        end
-
-        it "does not re-stage the job" do
-          middleware.call(job_class, job, queue, redis_pool) { true }
-          expect(Sidekiq::ReliableJob::Outbox.count).to eq(0)
-        end
-      end
-
-      context "when job has failed_at but no retry_count yet" do
-        let(:job) do
-          {
-            "class" => job_class,
-            "args" => [1, 2],
-            "jid" => "abc123",
-            "reliable_job" => true,
-            "failed_at" => Time.now.to_f,
-          }
-        end
-
-        it "yields to the next middleware (lets Sidekiq handle retry)" do
-          yielded = false
-          middleware.call(job_class, job, queue, redis_pool) { yielded = true }
-          expect(yielded).to be true
-        end
-      end
+      include_examples "bypasses staging"
     end
   end
 end

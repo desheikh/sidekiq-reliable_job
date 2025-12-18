@@ -1,55 +1,44 @@
 # frozen_string_literal: true
 
 RSpec.describe Sidekiq::ReliableJob::Client do
-  subject(:client) { described_class.new }
+  describe ".push" do
+    subject(:push) { described_class.push(item) }
 
-  # Disable Sidekiq testing mode to test actual staging behavior
-  around do |example|
-    Sidekiq::Testing.disable! do
-      example.run
-    end
-  end
-
-  describe "#push" do
     let(:item) do
-      {
-        "class" => "ExampleJob",
-        "args" => ["test message"],
-        "queue" => "default",
-      }
+      { "class" => "ExampleJob", "args" => ["test"], "queue" => "default" }
     end
 
     it "creates a staged job record" do
-      expect { client.push(item) }.to change(Sidekiq::ReliableJob::Outbox, :count).by(1)
+      expect { push }.to change(Sidekiq::ReliableJob::Outbox, :count).by(1)
     end
 
-    it "returns the jid" do
-      jid = client.push(item)
-      expect(jid).to be_present
-      expect(jid.length).to eq(24) # hex(12) = 24 characters
+    it "returns a 24-character jid" do
+      expect(push).to be_present
+      expect(push.length).to eq(24)
     end
 
-    it "stores the job payload" do
-      jid = client.push(item)
-      outbox_record = Sidekiq::ReliableJob::Outbox.find_by(jid: jid)
+    it "stores the job with correct attributes" do
+      jid = push
+      record = Sidekiq::ReliableJob::Outbox.find_by(jid: jid)
 
-      expect(outbox_record.job_class).to eq("ExampleJob")
-      expect(outbox_record.payload["queue"]).to eq("default")
-      expect(outbox_record.payload["args"]).to eq(["test message"])
-      expect(outbox_record.status).to eq("pending")
+      expect(record).to have_attributes(
+        job_class: "ExampleJob",
+        status: "pending",
+        payload: include("queue" => "default", "args" => ["test"]),
+      )
     end
 
     it "uses provided jid if present" do
       item["jid"] = "custom_jid_12345"
-      jid = client.push(item)
-      expect(jid).to eq("custom_jid_12345")
+
+      expect(push).to eq("custom_jid_12345")
     end
 
     context "when transaction rolls back" do
       it "does not persist the staged job" do
         expect {
           ActiveRecord::Base.transaction do
-            client.push(item)
+            described_class.push(item)
             raise ActiveRecord::Rollback
           end
         }.not_to change(Sidekiq::ReliableJob::Outbox, :count)
@@ -57,67 +46,46 @@ RSpec.describe Sidekiq::ReliableJob::Client do
     end
 
     context "when job with same JID already exists" do
-      let!(:existing_outbox) do
-        create(:outbox, jid: "existing_jid_123", status: "enqueued")
-      end
+      before { create(:outbox, jid: "existing_jid") }
 
-      let(:item) do
-        {
-          "class" => "ExampleJob",
-          "args" => ["new message"],
-          "queue" => "default",
-          "jid" => "existing_jid_123",
-        }
-      end
+      let(:item) { super().merge("jid" => "existing_jid") }
 
-      it "raises an error (duplicate JIDs indicate a bug)" do
-        expect { client.push(item) }.to raise_error(ActiveRecord::RecordNotUnique)
+      it "raises an error" do
+        expect { push }.to raise_error(ActiveRecord::RecordNotUnique)
       end
     end
 
-    context "with ActiveJob (Sidekiq 8+)" do
+    context "with ActiveJob wrapper" do
       let(:item) do
         {
-          "class" => "Sidekiq::ActiveJob::Wrapper",
+          "class" => wrapper_class,
           "wrapped" => "ExampleActiveJob",
           "args" => [{ "job_class" => "ExampleActiveJob", "arguments" => ["test"] }],
           "queue" => "default",
         }
       end
 
-      it "extracts the wrapped job class" do
-        jid = client.push(item)
-        outbox_record = Sidekiq::ReliableJob::Outbox.find_by(jid: jid)
+      context "with Sidekiq 8+ wrapper" do
+        let(:wrapper_class) { "Sidekiq::ActiveJob::Wrapper" }
 
-        expect(outbox_record.job_class).to eq("ExampleActiveJob")
-      end
-    end
+        it "extracts the wrapped job class" do
+          jid = push
+          record = Sidekiq::ReliableJob::Outbox.find_by(jid: jid)
 
-    context "with ActiveJob (legacy adapter)" do
-      let(:item) do
-        {
-          "class" => "ActiveJob::QueueAdapters::SidekiqAdapter::JobWrapper",
-          "wrapped" => "ExampleActiveJob",
-          "args" => [{ "job_class" => "ExampleActiveJob", "arguments" => ["test"] }],
-          "queue" => "default",
-        }
+          expect(record.job_class).to eq("ExampleActiveJob")
+        end
       end
 
-      it "extracts the wrapped job class" do
-        jid = client.push(item)
-        outbox_record = Sidekiq::ReliableJob::Outbox.find_by(jid: jid)
+      context "with legacy adapter wrapper" do
+        let(:wrapper_class) { "ActiveJob::QueueAdapters::SidekiqAdapter::JobWrapper" }
 
-        expect(outbox_record.job_class).to eq("ExampleActiveJob")
+        it "extracts the wrapped job class" do
+          jid = push
+          record = Sidekiq::ReliableJob::Outbox.find_by(jid: jid)
+
+          expect(record.job_class).to eq("ExampleActiveJob")
+        end
       end
-    end
-  end
-
-  describe "#push_bulk" do
-    it "delegates to the redis client" do
-      items = { "class" => "ExampleJob", "args" => [["msg1"], ["msg2"]] }
-
-      # push_bulk bypasses staging and goes directly to Redis
-      expect { client.push_bulk(items) }.not_to change(Sidekiq::ReliableJob::Outbox, :count)
     end
   end
 end

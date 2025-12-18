@@ -1,42 +1,30 @@
 # frozen_string_literal: true
 
 require "securerandom"
-require "sidekiq/client"
 
 module Sidekiq
   module ReliableJob
-    # A Sidekiq client that stages jobs to the database instead of pushing
-    # directly to Redis. Jobs are later pushed by the Enqueuer.
+    # Stages jobs to the Outbox for later delivery to Redis.
     class Client
-      def initialize(pool: nil, config: nil)
-        @redis_client = Sidekiq::Client.new(pool: pool, config: config)
-      end
+      class << self
+        def push(item)
+          item["jid"] ||= SecureRandom.hex(12)
 
-      def push(item)
-        return @redis_client.push(item) if sidekiq_testing_enabled?
+          Outbox.create!(
+            jid: item["jid"],
+            job_class: extract_job_class(item),
+            payload: item,
+            status: Outbox::PENDING,
+          )
 
-        item["jid"] ||= SecureRandom.hex(12)
+          item["jid"]
+        end
 
-        Outbox.create!({
-          jid: item["jid"],
-          job_class: extract_job_class(item),
-          payload: item,
-          status: Outbox::PENDING,
-        })
+        private
 
-        item["jid"]
-      end
-
-      delegate :push_bulk, to: :@redis_client
-
-      private
-
-      def extract_job_class(item)
-        (item["wrapped"] || item["class"]).to_s
-      end
-
-      def sidekiq_testing_enabled?
-        defined?(Sidekiq::Testing) && Sidekiq::Testing.enabled?
+        def extract_job_class(item)
+          (item["wrapped"] || item["class"]).to_s
+        end
       end
     end
   end

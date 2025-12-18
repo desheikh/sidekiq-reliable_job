@@ -8,6 +8,7 @@ A Sidekiq extension that provides reliable job delivery by staging jobs to the d
 - **Redis Outage Resilience**: Jobs continue to be accepted during Redis outages and are pushed once Redis is available.
 - **Reliable Delivery**: A background enqueuer process polls staged jobs and pushes them to Redis.
 - **Automatic Cleanup**: Jobs are automatically deleted from the staging table after successful completion.
+- **ActiveJob Support**: Works with both native Sidekiq jobs and ActiveJob.
 
 ## Installation
 
@@ -47,8 +48,12 @@ In your Sidekiq initializer (`config/initializers/sidekiq.rb`):
 require "sidekiq/reliable_job"
 
 Sidekiq::ReliableJob.configure do |config|
-  # Enable staged push for all jobs (default: false)
-  config.enable_for_all_jobs = true
+  # The ActiveRecord base class for the Outbox model (default: "ActiveRecord::Base")
+  config.base_class = "ApplicationRecord"
+  # Enable reliable job for all jobs (default: false)
+  config.enable_for_all_jobs = false
+  # Preserve dead jobs in outbox with "dead" status instead of deleting (default: false)
+  config.preserve_dead_jobs = false
 end
 
 Sidekiq.configure_client do |config|
@@ -94,6 +99,21 @@ class MyJob
 end
 ```
 
+### ActiveJob Support
+
+ReliableJob works with ActiveJob. Configure the job using `sidekiq_options`:
+
+```ruby
+class MyActiveJob < ApplicationJob
+  queue_as :default
+  sidekiq_options reliable_job: true
+
+  def perform(user_id)
+    # Your job logic here
+  end
+end
+```
+
 ### Example
 
 When you enqueue the job within a transaction, it will be staged to the database first:
@@ -110,9 +130,43 @@ end
 
 ## How It Works
 
-1. When you call `perform_async` on a reliable job, it creates a record in the `reliable_job_outbox` table instead of pushing directly to Redis.
-2. A background enqueuer process (started automatically with Sidekiq) polls for pending jobs and pushes them to Redis.
-3. When a job completes successfully, the server middleware deletes the staged job record.
+1. **Client Middleware**: Intercepts `perform_async` calls and stages jobs to the `reliable_job_outbox` table instead of pushing directly to Redis.
+2. **Outbox Processor**: A background thread polls for pending jobs and pushes them to Redis in batches.
+3. **Server Middleware**: After successful job completion, deletes the staged job record from the outbox.
+4. **Death Handler**: When a job exhausts all retries, removes (or optionally preserves) the record from the outbox.
+
+## Deployment & Rollout
+
+When enabling ReliableJob for the first time, use a **two-phase deployment** to avoid orphaned outbox records:
+
+### Phase 1: Deploy with ReliableJob Disabled
+
+First, deploy the gem with all jobs disabled. This installs the middleware on all containers without affecting any jobs:
+
+```ruby
+Sidekiq::ReliableJob.configure do |config|
+  config.enable_for_all_jobs = false  # No jobs use reliable delivery yet
+end
+```
+
+Wait for all containers to be running with the new code.
+
+### Phase 2: Enable ReliableJob
+
+Once all containers have the middleware installed, enable reliable delivery for your jobs:
+
+```ruby
+Sidekiq::ReliableJob.configure do |config|
+  config.enable_for_all_jobs = true  # Or enable per-job with sidekiq_options
+end
+```
+
+### Why This Matters
+
+If containers are running different versions during deployment:
+- New containers may stage jobs while old containers process them
+- Old containers don't have the server middleware, so they won't delete completed jobs from the outbox
+- This leaves orphaned "enqueued" records in the database
 
 ## Configuration Options
 
@@ -120,6 +174,7 @@ end
 |--------|---------|-------------|
 | `enable_for_all_jobs` | `false` | When `true`, all jobs are staged through the outbox |
 | `base_class` | `"ActiveRecord::Base"` | The ActiveRecord base class for the Outbox model |
+| `preserve_dead_jobs` | `false` | When `true`, keeps dead jobs in outbox with "dead" status instead of deleting |
 
 ## Development
 

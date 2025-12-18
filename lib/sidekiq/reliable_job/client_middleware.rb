@@ -2,55 +2,52 @@
 
 module Sidekiq
   module ReliableJob
-    # Client middleware that intercepts all job pushes and routes them through
-    # the Outbox based on configuration and per-job options.
-    #
-    # Behavior:
-    # - If sidekiq_options reliable_job: false -> skip staging (explicit opt-out)
-    # - If sidekiq_options reliable_job: true -> stage the job (explicit opt-in)
-    # - If reliable_job not set -> use enable_for_all_jobs config (global default)
-    #
-    # ActiveJob Support:
-    # - For ActiveJob, the actual job class is in job["wrapped"]
-    # - sidekiq_options from ActiveJob classes are checked via the wrapped class
+    # Intercepts job pushes and stages them to the Outbox instead of Redis.
     class ClientMiddleware
       def call(_job_class, job, _queue, _redis_pool)
-        return yield if sidekiq_testing_enabled?
-        return yield unless should_stage?(job)
-
-        return yield if retry?(job)
+        return yield if skip_staging?(job)
 
         job["reliable_job"] = true
-        Client.new.push(job)
+        Client.push(job)
 
-        nil # Prevent normal Redis push
+        yield if testing_enabled?
       end
 
       private
 
-      def should_stage?(job)
+      def skip_staging?(job)
+        retry?(job) || !enabled_for?(job)
+      end
+
+      def enabled_for?(job)
         option = reliable_job_option(job)
 
-        return false if option == false
-
-        option == true || Sidekiq::ReliableJob.configuration.enable_for_all_jobs
+        case option
+        when true then true
+        when false then false
+        else ReliableJob.configuration.enable_for_all_jobs
+        end
       end
 
       def reliable_job_option(job)
         return job["reliable_job"] if job.key?("reliable_job")
 
-        wrapped = job["wrapped"]
-        return nil unless wrapped
+        wrapped_class_option(job)
+      end
 
-        job_class = wrapped.is_a?(Class) ? wrapped : wrapped.to_s.safe_constantize
-        job_class&.try(:sidekiq_options_hash)&.dig("reliable_job")
+      def wrapped_class_option(job)
+        wrapped = job["wrapped"]
+        return unless wrapped
+
+        klass = wrapped.is_a?(Class) ? wrapped : wrapped.to_s.safe_constantize
+        klass&.sidekiq_options_hash&.dig("reliable_job")
       end
 
       def retry?(job)
-        job.key?("retry_count") || job.key?("failed_at")
+        job.key?("retry_count")
       end
 
-      def sidekiq_testing_enabled?
+      def testing_enabled?
         defined?(Sidekiq::Testing) && Sidekiq::Testing.enabled?
       end
     end

@@ -2,6 +2,7 @@
 
 module Sidekiq
   module ReliableJob
+    # Configuration options for ReliableJob.
     class Configuration
       attr_accessor :base_class, :enable_for_all_jobs, :preserve_dead_jobs
 
