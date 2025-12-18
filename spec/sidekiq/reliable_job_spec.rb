@@ -109,12 +109,27 @@ RSpec.describe Sidekiq::ReliableJob do
   describe ".on_death" do
     let!(:outbox_record) { create(:outbox, :enqueued, jid: "dead_job_123") }
 
-    it "marks reliable jobs as dead" do
-      job = { "jid" => "dead_job_123", "reliable_job" => true }
+    context "when preserve_dead_jobs is false (default)" do
+      it "deletes reliable jobs from outbox" do
+        job = { "jid" => "dead_job_123", "reliable_job" => true }
 
-      described_class.on_death(job, RuntimeError.new("failed"))
+        described_class.on_death(job, RuntimeError.new("failed"))
 
-      expect(outbox_record.reload.status).to eq("dead")
+        expect(Sidekiq::ReliableJob::Outbox.exists?(jid: "dead_job_123")).to be false
+      end
+    end
+
+    context "when preserve_dead_jobs is true" do
+      before { described_class.configuration.preserve_dead_jobs = true }
+      after { described_class.configuration.preserve_dead_jobs = false }
+
+      it "marks reliable jobs as dead" do
+        job = { "jid" => "dead_job_123", "reliable_job" => true }
+
+        described_class.on_death(job, RuntimeError.new("failed"))
+
+        expect(outbox_record.reload.status).to eq("dead")
+      end
     end
 
     it "ignores non-reliable jobs" do

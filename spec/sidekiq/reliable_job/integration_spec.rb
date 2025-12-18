@@ -96,8 +96,8 @@ RSpec.describe "ReliableJob Integration" do
       expect(Sidekiq::ReliableJob::Outbox.exists?(jid: jid)).to be true
     end
 
-    it "marks job as dead when retries exhausted and deletes on successful retry" do
-      ExampleJob.perform_async("will die then retry")
+    it "deletes job from outbox when retries exhausted" do
+      ExampleJob.perform_async("will die")
       outbox_record = Sidekiq::ReliableJob::Outbox.order(:id).last
       jid = outbox_record.jid
 
@@ -111,14 +111,7 @@ RSpec.describe "ReliableJob Integration" do
       # Simulate job death (retries exhausted)
       Sidekiq::ReliableJob.on_death(job_payload, RuntimeError.new("exhausted"))
 
-      # Verify job is marked as dead
-      expect(outbox_record.reload.status).to eq("dead")
-
-      # Simulate retry from dead queue (same JID is reused)
-      middleware = Sidekiq::ReliableJob::ServerMiddleware.new
-      middleware.call(ExampleJob.new, job_payload, "default") { true }
-
-      # Job should be deleted after successful retry
+      # Job should be deleted from outbox
       expect(Sidekiq::ReliableJob::Outbox.exists?(jid: jid)).to be false
     end
   end

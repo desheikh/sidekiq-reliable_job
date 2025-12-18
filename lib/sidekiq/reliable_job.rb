@@ -46,7 +46,11 @@ module Sidekiq
       def on_death(job, _exception)
         return unless job["reliable_job"]
 
-        Outbox.where(jid: job["jid"]).update_all(status: Outbox::DEAD)
+        if configuration.preserve_dead_jobs
+          Outbox.where(jid: job["jid"]).update_all(status: Outbox::DEAD)
+        else
+          Outbox.where(jid: job["jid"]).delete_all
+        end
       end
     end
   end

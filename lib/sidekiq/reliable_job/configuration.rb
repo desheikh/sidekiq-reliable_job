@@ -3,11 +3,12 @@
 module Sidekiq
   module ReliableJob
     class Configuration
-      attr_accessor :base_class, :enable_for_all_jobs
+      attr_accessor :base_class, :enable_for_all_jobs, :preserve_dead_jobs
 
       def initialize
         @base_class = "ActiveRecord::Base"
         @enable_for_all_jobs = false
+        @preserve_dead_jobs = false
       end
     end
 
