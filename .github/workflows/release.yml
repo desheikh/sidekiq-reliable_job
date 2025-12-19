@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    environment: Publishing
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for new version in CHANGELOG
+        id: changelog
+        run: |
+          # Extract latest version from CHANGELOG.md (first ## [x.y.z] entry that's not Unreleased)
+          VERSION=$(grep -oP '## \[\K[0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | head -1)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          # Check if tag already exists
+          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            echo "Tag v$VERSION already exists, skipping release"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          else
+            echo "New version $VERSION found, will release"
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Ruby
+        if: steps.changelog.outputs.should_release == 'true'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+
+      - name: Build gem
+        if: steps.changelog.outputs.should_release == 'true'
+        run: gem build sidekiq-reliable_job.gemspec
+
+      - name: Publish to RubyGems
+        if: steps.changelog.outputs.should_release == 'true'
+        env:
+          RUBYGEMS_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}
+        run: |
+          mkdir -p ~/.gem
+          echo -e "---\n:rubygems_api_key: ${RUBYGEMS_API_KEY}" > ~/.gem/credentials
+          chmod 0600 ~/.gem/credentials
+          gem push sidekiq-reliable_job-*.gem
+
+      - name: Create git tag
+        if: steps.changelog.outputs.should_release == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ steps.changelog.outputs.version }}" -m "Release v${{ steps.changelog.outputs.version }}"
+          git push origin "v${{ steps.changelog.outputs.version }}"
+

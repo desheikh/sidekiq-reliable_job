@@ -11,7 +11,12 @@ gem "rake", "~> 13.0"
 
 # Rails for dummy app
 gem "puma"
-gem "rails", ">= 7.1"
+
+rails_version = ENV.fetch("RAILS_VERSION", "8.1")
+gem "rails", "~> #{rails_version}"
+
+sidekiq_version = ENV.fetch("SIDEKIQ_VERSION", "8.0")
+gem "sidekiq", "~> #{sidekiq_version}"
 
 # Testing
 gem "factory_bot_rails"
